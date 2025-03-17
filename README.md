@@ -1,2 +1,3 @@
-# reaktor-artifacts
-Artifacts and additional resources realated to the REAKTOR project.
+# REAKTOR Artifacts
+
+Artifacts and additional resources produced in the context of the REAKTOR project.
