@@ -1,0 +1,589 @@
+/* 
+This STPA will only focus on the case, when the train is notified to perform a safe docking procedure and
+therefore the Operating Controller is in 'SafeDocking' mode. Everything else is described in the main STPA.
+
+Safedocking:
+ 1. Management System notifies both trains, giving both trains the meanst to communicate
+ 2. Both trains confirm the command, switch into safe docking mode and establish a connection to communicate
+ 3. Both trains regularly send their track kilometer (Based on distance, the speed is defined)
+ 4. If trains come to close for accurate positioning, distance sensors will detect the distance between both, 
+    steadily decreasing speed until both stop at the same point and make contact
+ 5. Upon contact, docking sensors give out the signal, that the maneuver was successful and both trains switch their destinations.
+
+If in any case a train switches into emergency mode the Management System is informed and the maneuver aborted
+
+If a train is beeing controlled remotly
+*/
+
+Losses
+L1 "Loss of life or injury"
+L2 "Loss of damage to operating components, vehicles or infrastructure"
+L3 "Loss of Communication"
+L4 "Loss of mission"
+L5 "Loss of customer satisfaction"
+
+Hazards
+H1 "Vehicle loses communication to other vehicle during safe-docking-procedure" [L3]
+H2 "Vehicles dock with too much speed against each other" [L1,L2,L3,L4,L5]
+H3 "Vehicle thinks it docked succesfully, while not being docked" [L1, L5]
+H4 "Vehicles are not informed correctly that they need to dock" [L1]
+H5 "One or both trains are unable to perform the maneuver"[L1]
+H6 "Vehicles calculate incorrect distances between each other"[L1,L2]
+
+SystemConstraints
+SC1 "The trains must not lose communication to each other during the safe-docking-procedure"[H1]
+SC2 "The vehicles must dock slowly against each other without damaging components or risk passangers" [H2]
+SC3 "Vehicles must be able to confirm, when the maneuver has been succesfull"[H3]
+SC4 "The correct vehicles must be informed in time for a full maneuver without risking any hazards"[H4]
+SC5 "Both trains must be able to perform the maneuver. Otherwise it needs to be aborted"[H5]
+SC6 "The trains must always know the correct distance between each other"[H6] 
+
+
+
+ControlStructure
+Structure{
+    RemoteController{
+        processModel{
+            gpsPosition: [GPS]
+            currentSpeed: [trainSpeed]
+            driveControllerMode: [emergencyStop=[1], forwards=[2], backwards=[3]]
+        }
+        controlActions{
+            [takeControl "takeControl", releaseControl "releaseControl", setSpeed "setSpeed", setMode "setMode"] -> OperatingController
+            [takeControl2 "takeControl", releaseControl2 "releaseControl", setSpeed2 "setSpeed", setMode2 "setMode"] -> OperatingController2
+        }
+    }
+    ManagementSystem{
+        processModel{
+            safeDockingNeeded: [Yes = [true], No = [false]]
+            trainJobListEmpty: [Yes = [true], No = [false]]
+            availableJobs: [Yes = [true], No = [false]]
+            trainOK: [Yes = [true], No = [false]]
+            abortingNotified: [Yes = [true], No = [false]]
+        }
+        controlActions{
+            [safeDocking1 "safedocking", abort1 "abortSafedocking"] -> Train_1
+            [safeDocking2 "safedocking", abort2 "abortSafedocking"] -> Train_2
+        }
+    }
+
+    Train_1{
+        OperatingController{
+            processModel{
+                remote_control: [on=[true],off=[false]]
+                mode: [initialization=[0],normal=[1], degraded = [2],emergency= [4]]
+                safeDocking: [on = [true], off = [false]]
+                driveControllerMode: [emergencyStop=[1], forwards=[2], backwards=[3]]
+                gpsPosition: [GPS]
+                trackPosition: [trackkilometer]
+                desiredSpeed: [desiredSpeed]
+                driveDirection: [forwards=[2], backwards=[3]]
+                currentSpeed: [trainSpeed=[desiredSpeed], lessDesiredSpeed = [MIN, desiredSpeed), greaterDesiredSpeed=(desiredSpeed, MAX]]
+                destinationList: [destination]
+                distanceToDestination: [smallerOneKM = (MIN,1], greaterOneKM = [1, MAX]]
+                distanceToVehicle: [greater500m = (500,MAX],  smaller500m = (10,500], smaller10m = [MIN,10]]
+
+            }
+            controlActions{
+                //  [setMode "setMode", setSpeed "setSpeed", setDirection "setDirection"] -> DriveController
+                // set Speed
+               [setSpeed "setSpeed"] -> DriveController
+               // set Mode
+               //[emergencyStop "emergencyStop", forwards "forwards", backwards "backwards"] -> DriveController
+               [sendLocation "Location", sendAbort "Abort", sendMessage "Message"] -> Train_2
+               [sendLocationTrack "Location", sendDestination "Destination"] -> TrackNavigation
+               [OtherCA "OtherControlActions"] -> OtherSubSystems
+
+            }
+            feedback{
+                [TrainSpeed "trainspeed", location1 "gpsLocation", remoteConf "remoteConfirmation", driveMode "driveMode"] -> RemoteController
+                [location2 "gpsLocation", destConf "destinationConfirmation", arrConf "arrivalConfirmation", safeDockingConf "safeDockingConfirmation", safedockingAbort "abort"] -> ManagementSystem
+            }
+        }
+        TrackNavigation{
+            processModel{
+                gpsPosition: [GPS]
+                Track: [Trackkilometers]
+                Destination:[Destination]
+            }
+            feedback{
+            [driveDirection "Direction", trackPosition "trackPosition"] -> OperatingController
+            }
+        }
+        DriveController{
+            feedback{
+                [driving_mode "currentMode", desiredSpeed "desiredSpeed", direction "direction"] -> OperatingController
+            }
+        }
+        OtherSubSystems{
+            feedback{
+                [Otherfeedback "Otherfeedback"] -> OperatingController
+            }
+        }
+        PhysicalUnits{
+            DistanceSensors{
+                feedback{
+                    [distanceToVehicle "distanceToVehicle"] -> OperatingController
+                }
+            }
+            DockingSensors{
+                feedback{
+                    [DockingContract "DockingContract"] -> OperatingController
+                }
+            }
+            OtherUnits{}
+        }
+    }
+
+    Train_2{
+        OperatingController2{
+            processModel{
+                remote_control: [on=[true],off=[false]]
+                mode: [initialization=[0],normal=[1], degraded = [2],emergency= [4]]
+                safeDocking: [on = [true], off = [false]]
+                driveControllerMode: [emergencyStop=[1], forwards=[2], backwards=[3]]
+                gpsPosition: [GPS]
+                trackPosition: [trackkilometer]
+                desiredSpeed: [desiredSpeed]
+                driveDirection: [forwards=[2], backwards=[3]]
+                currentSpeed: [trainSpeed=[desiredSpeed], lessDesiredSpeed = [MIN, desiredSpeed), greaterDesiredSpeed=(desiredSpeed, MAX]]
+                destinationList: [destination]
+                distanceToDestination: [smallerOneKM = (MIN,1], greaterOneKM = [1, MAX]]
+                distanceToVehicle: [greater500m = (500,MAX],  smaller500m = (10,500], smaller10m = [MIN,10]]
+
+                
+            }
+            controlActions{
+                //  [setMode "setMode", setSpeed "setSpeed", setDirection "setDirection"] -> DriveController
+                // set Speed
+               [setSpeed "setSpeed"] -> DriveController2
+               // set Mode
+               //[emergencyStop "emergencyStop", forwards "forwards", backwards "backwards"] -> DriveController
+               [sendLocation "location", sendAbort "Abort", sendMessage "Message"] -> Train_1
+               [sendLocationTrack "Location", sendDestination "Destination"] -> TrackNavigation2
+               //[OtherCA "OtherControlActions"] -> OtherSubSystems
+
+            }
+            feedback{
+                [TrainSpeed "trainspeed", location1 "gpsLocation", remoteConf "remoteConfirmation", driveMode "driveMode"] -> RemoteController
+                [location2 "gpsLocation", destConf "destinationConfirmation", arrConf "arrivalConfirmation", safeDockingConf "safeDockingConfirmation", safedockingAbort "abort"] -> ManagementSystem
+            }
+        }
+        TrackNavigation2{
+            processModel{
+                gpsPosition: [GPS]
+                Track: [Trackkilometers]
+                Destination:[Destination]
+            }
+            feedback{
+            [driveDirection "Direction", trackPosition "trackPosition"] -> OperatingController2
+            }
+        }
+        DriveController2{
+            feedback{
+                [driving_mode "currentMode", desiredSpeed "desiredSpeed", direction "direction"] -> OperatingController2
+            }
+        }
+        OtherSubSystems2{
+            feedback{
+                [Otherfeedback "Otherfeedback"] -> OperatingController2
+            }
+        }
+        PhysicalUnits2{
+            DistanceSensors2{
+                feedback{
+                    [distanceToVehicle "distanceToVehicle"] -> OperatingController
+                }
+            }
+            DockingSensors2{
+                feedback{
+                    [DockingContract "DockingContract"] -> OperatingController
+                }
+            }
+            OtherUnits2{}
+        }
+    }
+}
+
+Responsibilities
+ManagementSystem{
+    R1 "Inform the right controllers at the right time about the maneuver"[SC4]
+    R2 "Abort the maneuver in case a train notfies an emergency or is in other ways unable to perform it"[SC5]
+}
+OperatingController{
+    R3 "Sustain communication at all times with the other vehicle and immidiatly notify the Management System if the connection brakes"[SC1]
+    R4 "Have an adequate speed, when docking to the other vehicle as to not risk loss"[SC2]
+    R5 "Immediatly abort in case of emergency or if it is in any other way unable to perform it"[SC5]
+    R6 "Reduce speed, if distance to vehicle is low enough during safedocking mode" [SC2]
+    R7 "Abort, when being remotly controlled"[SC5]
+}
+
+TrackNavigation{
+    R8 "Always give the train the correct positional awareness on the track"[SC6]
+    }
+DockingSensors{
+    R9 "Confrim if the vehicles have docked together"[SC3]
+    R10 "Confirm that docing was at a safe pace, without damaging to vehicles"[SC2]
+}
+DistanceSensors{
+    R11 "Give the correct distance between vehicles, when they are close enough to measure"[SC6]
+}
+OperatingController2{
+    R12 "Sustain communication at all times with the other vehicle and immidiatly notify the Management System if the connection brakes"[SC1]
+    R13 "Have an adequate speed, when docking to the other vehicle as to not risk loss"[SC2]
+    R14 "Immediatly abort in case of emergency or if it is in any other way unable to perform it"[SC5]
+    R15 "Reduce speed, if distance to vehicle is low enough during safedocking mode" [SC2]
+    R16 "Abort, when being remotly controlled"[SC5]
+}
+
+TrackNavigation2{
+    R17 "Always give the train the correct positional awareness on the track"[SC6]
+    }
+DockingSensors2{
+    R18 "Confrim if the vehicles have docked together"[SC3]
+    R19 "Confirm that docing was at a safe pace, without damaging to vehicles"[SC2]
+}
+DistanceSensors2{
+    R20 "Give the correct distance between vehicles, when they are close enough to measure"[SC6]
+}
+
+Context-Table
+RL1{
+    controlAction:ManagementSystem.safeDocking1
+    type: not-provided
+    contexts: {
+       UCA1 [safeDockingNeeded = Yes, trainOK = Yes] [H4]
+    }
+}
+RL2{
+    controlAction:ManagementSystem.safeDocking1
+    type: provided
+    contexts: {
+        UCA2 [safeDockingNeeded = No][H4]
+        UCA3 [trainOK = No] [H5]
+    }
+}
+RL3{
+    controlAction:ManagementSystem.safeDocking1
+    type: too-late
+    contexts: {
+       UCA4 [safeDockingNeeded = Yes, trainOK = Yes] [H4]
+    }
+}
+RL4{
+    controlAction:ManagementSystem.safeDocking2
+    type: not-provided
+    contexts: {
+       UCA5 [safeDockingNeeded = Yes, trainOK = Yes] [H4]
+    }
+}
+RL5{
+    controlAction:ManagementSystem.safeDocking2
+    type: provided
+    contexts: {
+        UCA6 [safeDockingNeeded = No][H4]
+        UCA7 [trainOK = No] [H5]
+    }
+}
+RL6{
+    controlAction:ManagementSystem.safeDocking2
+    type: too-late
+    contexts: {
+       UCA8 [safeDockingNeeded = Yes, trainOK = Yes] [H4]
+    }
+}
+RL7{
+    controlAction:ManagementSystem.abort1
+    type: not-provided
+    contexts: {
+       UCA9 [abortingNotified = Yes] [H5]
+       UCA10 [trainOK = No][H5]
+    }
+}
+RL8{
+    controlAction:ManagementSystem.abort1
+    type: provided
+    contexts: {
+       UCA11 [abortingNotified = No, trainOK = Yes] [H4]
+    }
+}
+RL9{
+    controlAction:ManagementSystem.abort1
+    type: too-late
+    contexts: {
+       UCA12 [abortingNotified = Yes] [H5]
+    }
+}
+RL10{
+    controlAction:ManagementSystem.abort2
+    type: not-provided
+    contexts: {
+       UCA13 [abortingNotified = Yes] [H5]
+       UCA14 [trainOK = No][H5]
+    }
+}
+RL11{
+    controlAction:ManagementSystem.abort2
+    type: provided
+    contexts: {
+       UCA15 [abortingNotified = No, trainOK = Yes] [H4]
+    }
+}
+RL12{
+    controlAction:ManagementSystem.abort2
+    type: too-late
+    contexts: {
+       UCA16 [abortingNotified = Yes] [H5]
+    }
+}
+RL13{
+    controlAction:OperatingController.sendAbort
+    type: not-provided
+    contexts: {
+       UCA17 [mode = emergency, safeDocking = on] [H2,H4,H5]
+       UCA18 [remote_control = on, safeDocking = on][H2,H4,H5]
+    }
+}
+RL14{
+    controlAction:OperatingController.sendAbort
+    type: provided
+    contexts: {
+       UCA19 [mode = normal, safeDocking = on] [H2]
+       UCA20 [mode = degraded, safeDocking = on] [H2]
+    }
+}
+RL13{
+    controlAction:OperatingController.sendAbort
+    type: too-late
+    contexts: {
+       UCA21 [mode = emergency, safeDocking = on] [H2,H4,H5]
+    }
+}
+RL14{
+    controlAction:OperatingController.sendLocation
+    type: not-provided
+    contexts: {
+       UCA22 [safeDocking = on] [H2,H6]
+    }
+}
+RL15{
+    controlAction:OperatingController.sendLocation
+    type: too-late
+    contexts: {
+       UCA23 [safeDocking = on] [H2,H6]
+    }
+}
+RL16{
+    controlAction:OperatingController.sendLocation
+    type: stopped-too-soon
+    contexts: {
+       UCA24 [safeDocking = on] [H2,H6]
+    }
+}
+RL17{
+    controlAction:OperatingController.setSpeed
+    type: not-provided
+    contexts: {
+       UCA25 [distanceToVehicle = smaller500m, currentSpeed = greaterDesiredSpeed, safeDocking = on] [H2]
+       UCA26 [distanceToVehicle = smaller10m, currentSpeed = greaterDesiredSpeed, safeDocking = on] [H2]
+    }
+}
+RL18{
+    controlAction:OperatingController.setSpeed
+    type: provided
+    contexts: {
+       UCA27 [distanceToVehicle = smaller500m, currentSpeed = lessDesiredSpeed, safeDocking = on] [H2]
+       UCA28 [distanceToVehicle = smaller10m, currentSpeed = lessDesiredSpeed, safeDocking = on] [H2]
+    }
+}
+RL21{
+    controlAction:OperatingController.setSpeed
+    type: too-late
+    contexts: {
+       UCA29 [distanceToVehicle = smaller500m, currentSpeed = greaterDesiredSpeed, safeDocking = on] [H2]
+       UCA30 [distanceToVehicle = smaller10m, currentSpeed = greaterDesiredSpeed, safeDocking = on] [H2]
+    }
+}
+RL22{
+    controlAction:OperatingController2.sendAbort
+    type: not-provided
+    contexts: {
+       UCA31 [mode = emergency, safeDocking = on] [H2,H4,H5]
+       UCA32 [remote_control = on, safeDocking = on][H2,H4,H5]
+    }
+}
+RL23{
+    controlAction:OperatingController2.sendAbort
+    type: provided
+    contexts: {
+       UCA33 [mode = normal, safeDocking = on] [H2]
+       UCA34 [mode = degraded, safeDocking = on] [H2]
+    }
+}
+RL24{
+    controlAction:OperatingController2.sendAbort
+    type: too-late
+    contexts: {
+       UCA35 [mode = emergency, safeDocking = on] [H2,H4,H5]
+    }
+}
+RL25{
+    controlAction:OperatingController2.sendLocation
+    type: not-provided
+    contexts: {
+       UCA36 [safeDocking = on] [H2,H6]
+    }
+}
+RL26{
+    controlAction:OperatingController2.sendLocation
+    type: too-late
+    contexts: {
+       UCA37 [safeDocking = on] [H2,H6]
+    }
+}
+RL27{
+    controlAction:OperatingController2.sendLocation
+    type: stopped-too-soon
+    contexts: {
+       UCA38 [safeDocking = on] [H2,H6]
+    }
+}
+RL28{
+    controlAction:OperatingController2.setSpeed
+    type: not-provided
+    contexts: {
+       UCA39 [distanceToVehicle = smaller500m, currentSpeed = greaterDesiredSpeed, safeDocking = on] [H2]
+       UCA40 [distanceToVehicle = smaller10m, currentSpeed = greaterDesiredSpeed, safeDocking = on] [H2]
+    }
+}
+RL29{
+    controlAction:OperatingController2.setSpeed
+    type: provided
+    contexts: {
+       UCA41 [distanceToVehicle = smaller500m, currentSpeed = lessDesiredSpeed, safeDocking = on] [H2]
+       UCA42 [distanceToVehicle = smaller10m, currentSpeed = lessDesiredSpeed, safeDocking = on] [H2]
+    }
+}
+RL30{
+    controlAction:OperatingController2.setSpeed
+    type: too-late
+    contexts: {
+       UCA43 [distanceToVehicle = smaller500m, currentSpeed = greaterDesiredSpeed, safeDocking = on] [H2]
+       UCA44 [distanceToVehicle = smaller10m, currentSpeed = greaterDesiredSpeed, safeDocking = on] [H2]
+    }
+}
+
+
+
+ControllerConstraints
+C1 "Management system must provide the notification to both trains, when a safe docking procedure is needed"[UCA1,UCA5]
+C2 "Management system must not provide notification to trains, of safe docking is not in order"[UCA2,UCA6]
+C3 "Management system may not provide a notification if one or both trains are unable to perform it"[UCA3,UCA7]
+C4 "Management system must provide notifications in time for the procedure to take place without any risk"[UCA4,UCA8]
+C5 "Management system must abort if any trains request to abort the procedure"[UCA9, UCA13]
+C6 "Management system must abort if any trains are not able to perform."[UCA10, UCA14]
+C7 "Management system may not give the command to abort, if none of the trains request it and both trains are ok"[UCA11, UCA15]
+C8 "Management system must abort in time for the procedure to be aborted safely"[UCA12,UCA16]
+C9 "Trains must send abort message in time to the other train when it cannot perform the procedure"[UCA17,UCA21,UCA31,UCA35]
+C10 "Trains must sent abort when safe docking and being controlled remotly" [UCA18,UCA32]
+C11 "Trains must not send abort message, when there is no reason to abort docking" [UCA19,UCA20,UCA33,UCA34]
+C12 "Trains must always regulary send it's own location to the other Train while safe docking without any delays"[UCA22,UCA23,UCA35,UCA36]
+C13 "Trains may not stop giving send their current position, until the procedure is completed"[UCA24,UCA37]
+C14 "Trains must reduce speed gradually and in time, when it is close to the other vehicle during safe docking"[UCA25,UCA29,UCA38,UCA42]
+C15 "Trains must reduce speed to a minimum, when it is less then 10 meter apart from the other vehicle during safe docking"[UCA26,UCA30,UCA39,UCA43]
+C16 "Trains my not increase speed when they are close to the other vehicle" [UCA27, UCA28,UCA40, UCA41]
+
+LossScenarios
+// The same scenarios exist of course for both trains
+Scenario1 for UCA1
+"The management system does not correctly identify that safe docking is necessary, thereby not giving out the action."[H4]
+Scenario2 for UCA1
+"The management system corrctly identifies, that safe docking is necessary, but wrongfully thinks, that the trains are not able to perform it."[H4]
+Scenario3 for UCA2
+"The management system received an incorrect position, of one of the trains, thinking that safe docking is necessary, even though, these trains are not going to meet."[H4]
+Scenario4 for UCA3
+"One of the trains does not inform the management system correctly, that it cannot perform Single Line Track Transfer, making it, that the system gives out the notification anyway."[H5]
+Scenario5 for UCA3
+"The management system ignores the warning from a train, sending out the notification, even though the train is meant to abort it."[H5]
+Scenario6 for UCA4
+"Due to delays in the internal process module, the management system identifes too late, that safe docking is needed, sending out the notifications too late."[H4]
+Scenario7 for UCA4
+"The management system correctly identifies both trains, but needs to establish a connection with them first because:
+    - The connection was lost prior
+    - A connection was never established
+    - A former connection had faults and needed to be re-established 
+This leading to delayed notifations."[H4]
+Scenario8 for UCA9
+"The system ignores the trains request to abort the trains request to abort. This can have multiple reasons:
+    - The system missinterprets the message
+    - The system missinterprets the ID of the train that sent the abort, thinking it was a different train
+    - The message to abort was lost
+This leading to the system not aborting the Single Line Track Transfer."[H5]
+Scenario9 for UCA11
+"The system missinterprets a message from one of the trains, thinking they request to abort."[H4]
+Scenario10 for UCA11
+"An intern system failure leads the system to abort safe docking, even though the maneuver was not affected by this."[H4]
+Scenario11 for UCA12
+"The management system wants to send out the notification to abort, but needs to establish a connection with them first because:
+    - The connection was lost prior
+    - A connection was never established
+    - A former connection had faults and needed to be re-established 
+This leading to delayed notifations."[H5]
+Scenario12 for UCA12
+"Due to delays in the internal process module, the management system identifes too late, that safe docking is needed, sending out the notifications too late."[H5]
+Scenario13 for UCA17
+"The train must abort the maneuver, but incorrectly believes, that it already has sent the notification."[H5]
+Scenario14 for UCA17
+"The train must abort, but incorrectly thinks, that the connection to the other train has been lost. Therefore it first tries to estabish another connection, not sending the abort notification."[H2,H5]
+Scenario15 for UCA17
+"The train must abort, but due to errors a connections was never established between both trains,"[H2,H4,H5]
+Scenario16 for UCA18
+"The train does not send abort when being controlled remotly, as it incorrectly believes, that it already has sent the notification."[H5]
+Scenario17 for UCA18
+"The train does not sent abort when being controlled remotly, as it incorreclty believes, that it is not safe docking right now."[H2,H4,H5]
+Scenario18 for UCA21
+"Due to delays in the internal process module, the train identifies too late, that it needs to abort, sending out the notifications too late."[H2]
+Scenario19 for UCA21
+"The train wants to send out the notification to abort, but needs to establish a connection with them first because:
+    - The connection was lost prior
+    - A connection was never established
+    - A former connection had faults and needed to be re-established 
+This leading to delayed notifations."[H2]
+Scenario20 for UCA22
+"The train is unable to calculate its own position on the track and therefore can not send it to the other train"[H2,H6]
+Scenario21 for UCA22
+"The connection is establish incorrect or lost, therefore the train can not send its position on the track."[H2,H6]
+Scenario22 for UCA22
+"Connections was lost to the GPS system (or other positioning method), making the train not aware of its own position and therefore unable to send it."[H2,H6]
+Scenario23 for UCA23
+"Due to delays in the internal process module, the train calculates its position late, sending out the notifications too late."[H2,H6]
+Scenario24 for UCA23
+"The train wants to send its location, but needs to establish a connection with them first because:
+    - The connection was lost prior
+    - A connection was never established
+    - A former connection had faults and needed to be re-established 
+This leading to delayed notifations."[H2,H6]
+Scenario25 for UCA24
+"The train incorrectly believes, that the maneuver has been completed already, therefore stops sending its location."[H2,H6]
+Scenario26 for UCA24
+"The train incorrectly believes, that the maneuver has been aborted, therefore stops sending its location."[H2,H6]
+Scenario27 for UCA25
+"The train incorrectly calculates the distance between vehicles and therefore does not slow down."[H2]
+Scenario28 for UCA25
+"The train receives incorrect or outdated positioning information from the other train, leading it to calculate a distance between them, that does not correspond to reality"[H2]
+Scenario29 for UCA26
+"The distance sensors do not identify the other train correctly, leading the train to not slow down further"[H2]
+Scenario30 for UCA26
+"The distance sensors measure an incorrect distance to the other train, that is way to far away."[H2]
+Scenario31 for UCA27
+"The train miscalculates its own position on the track or that of the other train, leading it to believe, that the distance between them is now much greater then before and therefore accelerates."
+Scenario32 for UCA38
+"The train receives incorrect feedback on the distance between vehicles form the distance sensors, leading it to not reduce speed at a rate, that it should do."[H2]
+Scenario33 for UCA29
+"Due to delays in the internal process module, the train slows down too late."[H2]
+Scenario34 for UCA29
+"The train calculates the distance between vehicles to late, as it does not receive the position of the other vehicle. The reason for this is that it needs to establish a connection with it first because:
+    - The connection was lost prior
+    - A connection was never established
+    - A former connection had faults and needed to be re-established 
+This leading to delayed speed adjustments."[H2]
