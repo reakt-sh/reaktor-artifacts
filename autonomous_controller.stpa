@@ -1,0 +1,656 @@
+Losses
+L1 "Loss of life or injury"
+L2 "Loss of operating components, vehicle or infrastructure"
+L3 "Loss of Communication"
+L4 "Loss of mission"
+L5 "Loss of customer satisfaction"
+
+Hazards
+H1 "System integrity is lost" [L1,L2,L3,L4,L5]
+
+H2 "Vehicle exceeds safe-operating envelope for its environment (Speed, Lateral/Horizontal forces)" [L1,L2]{
+
+    H2.1 "Vehicle exceeds safe speed limit of the track"
+    H2.2 "Vehicle accelerates too fast"
+    H2.3 "Vehicle decelerates too fast, while not performing a Emergency Stop"
+}
+
+H3 "Vehicle comes too close to objects on track" [L1,L2]
+
+H4 "Vehicle loses communication to infrastructure or other vehicles" [L3,L4]
+
+H5 "Vehicle loses connection while being controlled by remote controller" [L1,L2,L3,L4]
+
+H6 "Insufficient positional awareness of the vehicle on the track" [L1,L2,L4]
+
+
+
+SystemConstraints
+SC1 "System integrity must not be lost" [H1]
+
+SC2 "Vehicle may not exceed the safe-operating envelope for its environment" [H2]{
+
+    SC2.1 "Vehicle may not exceed the safe speed limit of the track" [H2.1]
+    SC2.2 "Vehicle may not accelerate too fast" [H2.2]
+    SC2.3 "Vehicle my not deccelerate too fast, while not performing a Emergency Stop" [H2.3]
+}
+
+SC3 "Vehicle must remain a safe distance to objects on the track" [H3]
+
+SC4 "Vehicle must not lose communication to infrastructure or other vehicles" [H4]
+
+SC5 "Vehicle must not lose connection while being controlled by the remote controller"[H5]
+
+SC6 "Vehicle must at all times have a sufficient awareness of its own position" [H6]
+
+
+
+ControlStructure
+Structure{
+    // Controller able to overtake control of the train remotly
+    RemoteController{
+        processModel{
+            gpsPosition: [GPS]
+            currentSpeed: [trainSpeed]
+            driveControllerMode: [emergencyStop=[1], forwards=[2], backwards=[3]]
+        }
+        controlActions{
+            [takeControl "takeControl", releaseControl "releaseControl", setSpeed "setSpeed", setMode "setMode"] -> OperatingController
+        }
+
+    }
+    // Control structure resposable for the management of the trains
+    ManagementSystem{
+        processModel{
+            safeDockingNeeded: [Yes = [true], No = [false]]
+            trainJobListEmpty: [Yes = [true], No = [false]]
+            availableJobs: [Yes = [true], No = [false]]
+        }
+        controlActions{
+            [setDestination "setDestination", deleteDestination "deleteDestination", safeDocking "safeDocking"] -> OperatingController
+        }
+    }
+
+    // Physical Train and all it's components
+    Train{
+        OperatingController{
+            processModel{
+                //weather_conditions: [good, medium, bad]
+                remote_control: [on=[true],off=[false]]
+                mode: [initialization=[0],normal=[1], degraded = [2],emergency= [4]]
+                safeDocking: [on = [true], off = [false]]
+                driveControllerMode: [emergencyStop=[1], forwards=[2], backwards=[3]]
+                gpsPosition: [GPS]
+                trackPosition: [trackkilometer]
+                desiredSpeed: [zero = [0], greaterZero = (0,MAX]]
+                driveDirection: [forwards=[2], backwards=[3]]
+                currentSpeed: [trainSpeed=[desiredSpeed], lessDesiredSpeed = [MIN, desiredSpeed), greaterDesiredSpeed=(desiredSpeed, MAX]]
+                destinationList: [destination]
+                distanceToDestination: [smallerOneKM = (MIN,1], greaterOneKM = [1, MAX]]
+                distanceToVehicle: [greater500m = (500,MAX],  smaller500m = (10,500], smaller10m = [MIN,10]]
+
+                
+            }
+            controlActions{
+                //  [setMode "setMode", setSpeed "setSpeed", setDirection "setDirection"] -> DriveController
+                // set Speed
+               [setSpeed "setSpeed"] -> DriveController
+               // set Mode
+               [emergencyStop "emergencyStop", forwards "forwards", backwards "backwards"] -> DriveController
+               [sendMessage "sendMessage"] -> Communication
+               [getDesiredSpeed "getDesiredSpeed", getTrackposition "getTrackPosition"] -> TrackNavigation
+               [OtherCA "OtherControlActions"] -> OtherSubSystems
+
+            }
+            feedback{
+                [TrainSpeed "trainspeed", remoteConf "remoteConfirmation", driveMode "driveMode", camera "camera"] -> RemoteController
+                [location2 "gpsLocation", TrainSpeed2 "trainspeed", destConf "destinationConfirmation", safeDockingConf "safeDockingConfirmation", safedockingAbort "abortSafeDocking"] -> ManagementSystem
+            }
+        }
+        DriveController{
+            processModel{
+                currentSpeed: [desiredSpeed=[setSpeed], lessDesiredSpeed = [MIN, setSpeed), greaterDesiredSpeed=(setSpeed, MAX], greaterZero = (0, MAX], zero = [0]]
+                driving_mode: [emergencyStop=[0], forwards=[1], backwards=[2]]
+
+            }
+             controlActions{
+                [acc "accelerate", dec "decelerate", forwards "forwards", backwards "backwards"]-> Motor
+                [brake "brake"] -> WheelBrakes
+            }
+            feedback{
+                [driving_mode "currentMode", desiredSpeed "desiredSpeed", direction "direction"] -> OperatingController
+            }
+        }
+        TrackNavigation{
+            processModel{
+                gpsPosition: [GPS]
+                Track: [Trackkilometers, speedlimit]
+                Destination:[Destination]
+            }
+            feedback{
+            [driveDirection "Direction", trackPosition "trackPosition", desiredSpeed "desiredSpeed"] -> OperatingController
+            }
+        }
+        OtherSubSystems{
+            feedback{
+                [Otherfeedback "Otherfeedback"] -> OperatingController
+            }
+
+        }
+        PhysicalUnits{
+
+            Motor{
+                feedback{
+                    [TrainSpeed1 "trainSpeed"] -> OperatingController 
+                    [TrainSpeed2 "trainSpeed"] ->DriveController
+                }
+
+            }
+
+            WheelBrakes{
+                feedback{
+                    [trainSpeed "trainSpeed"] -> DriveController
+                }
+
+            }
+
+            GPS{
+                feedback{
+                    [position "gpsPosition"] -> OperatingController
+                }
+            }
+
+            Sensors{
+                feedback{
+                    [sensorSignal "sensorSignal", distanceToVehicle "distanceToVehicle"] -> OperatingController
+                }
+
+            }
+            Communication{
+                feedback{
+                    [otherVevicleMessage "otherVehicleMessage"] -> OperatingController
+                }
+            }
+        }
+        
+    }
+}
+
+Responsibilities
+    OperatingController{
+        R1 "Give Control action to reduce speed, if vehicle goes over desired speed, while not being remote controlled"[SC2.1]
+        R2 "Give Control action to accelerate to appropiate speed if vehicle is under desired speed and no signals contradict, while not being remote controlled"[SC2]
+        R3 "Give Control action for emergency stop if signals demand it, while not being remote controlled"[SC3]
+        R4 "Change into degraded mode, if signals spot something near the track, where a full emergency stop is not warranted" [SC3]
+        R5 "Must switch into emergency mode in case a system component malfunctions" [SC1]
+        R6 "Must switch into remote mode if remote controller wants to take over control" [SC5]
+        R7 "If connection to remote controller is unexpected lost, switch  into emergency mode" [SC5]
+    }
+    DriveController{
+        R8 "May not give control action to accelerate too fast" [SC2.2]
+        R9 "May not give control action to decelerate or brake too fast, unless it performs an emergency stop" [SC2.3]
+        R10 "Set desired speed to 0 in case of emergency Stop" [SC2]
+    }
+    TrackNavigation{
+        R11 "Always give the train the correct positional awareness on the track"[SC6]
+    }
+    Motor{
+        R12 "Decelerate speed, when Drive controller commands it" [SC3]
+        R13 "Accelerate  speed, when Drive controller commands it" [SC1]
+    }
+    WheelBrakes{
+        R14 "Brake, when drive controller commands it" [SC3]
+    }
+    GPS{
+        R15 "Must have sufficient awareness over its own position on the track"[SC6]
+        R16 "Must regularly give feedback about the change in position to the Operating Controller"[SC6]
+    }
+    Communication{
+        R17 "give imidiate feedback, when communication is unexpectedly interrupted" [SC4]
+    }
+
+
+Context-Table
+//Acceleration
+RL1{
+    controlAction:DriveController.acc
+    type: provided
+    contexts: {
+        UCA1 [driving_mode = emergencyStop] [H1,H3]
+        UCA2 [driving_mode = forwards, currentSpeed = desiredSpeed ] [H2.1]
+        UCA3 [driving_mode = forwards, currentSpeed = greaterDesiredSpeed ] [H2.1]
+        UCA4 [driving_mode = backwards, currentSpeed = desiredSpeed ] [H2.1]
+        UCA5 [driving_mode = backwards, currentSpeed = greaterDesiredSpeed ] [H2.1]
+    }
+}
+// Deceleration
+RL2{
+    controlAction:DriveController.dec
+    type: not-provided
+    contexts: {
+        UCA6 [driving_mode = forwards, currentSpeed = greaterDesiredSpeed] [H2.1]
+        UCA7 [driving_mode = backwards, currentSpeed = greaterDesiredSpeed] [H2.1]
+    }
+}
+RL3{
+    controlAction:DriveController.dec
+    type: too-late
+    contexts: {
+        UCA8 [driving_mode = forwards, currentSpeed = greaterDesiredSpeed] [H2.1]
+        UCA9 [driving_mode = backwards, currentSpeed = greaterDesiredSpeed] [H2.1]
+    }
+}
+RL4{
+    controlAction:DriveController.dec
+    type: stopped-too-soon
+    contexts: {
+        UCA10 [driving_mode = forwards, currentSpeed = greaterDesiredSpeed] [H2.1]
+        UCA11 [driving_mode = backwards, currentSpeed = greaterDesiredSpeed] [H2.1]
+    }
+}
+// Forwards
+RL5{
+    controlAction: DriveController.forwards
+    type: provided
+    contexts:{
+        UCA12 [driving_mode = backwards, currentSpeed = greaterZero] [H2]
+    }
+}
+RL6{
+    controlAction: DriveController.forwards
+    type: not-provided
+    contexts:{
+        UCA13 [driving_mode = forwards, currentSpeed = zero] [H2]
+    }
+}
+// Backwards
+RL7{
+    controlAction: DriveController.backwards
+    type: provided
+    contexts:{
+        UCA14 [driving_mode = forwards, currentSpeed = greaterZero] [H2]
+    }
+}
+RL8{
+    controlAction: DriveController.backwards
+    type: not-provided
+    contexts:{
+        UCA15 [driving_mode = backwards, currentSpeed = zero] [H2]
+    }
+}
+// Brake
+RL9{
+    controlAction:DriveController.brake
+    type: not-provided
+    contexts: { 
+        UCA16 [driving_mode = emergencyStop] [H3]
+   }
+}
+RL10{
+    controlAction:DriveController.brake
+    type: too-late
+    contexts: { 
+        UCA17 [driving_mode = emergencyStop] [H3]
+   }
+}
+RL11{
+    controlAction:DriveController.brake
+    type: stopped-too-soon
+    contexts: { 
+        UCA18 [driving_mode = emergencyStop, currentSpeed = greaterZero] [H3]
+   }
+}
+
+// SetSpeed
+RL12{
+    controlAction:OperatingController.setSpeed
+    type: not-provided
+    contexts: { 
+        UCA19 [currentSpeed = greaterDesiredSpeed, mode = normal] [H2.1]
+        UCA20 [currentSpeed = greaterDesiredSpeed, mode = degraded] [H2.1]
+   }
+}
+
+RL13{
+    controlAction:OperatingController.setSpeed
+    type: provided
+    contexts: { 
+        UCA21 [mode = emergency, desiredSpeed = zero] [H2.1,H3]
+   }
+}
+
+RL14{
+    controlAction:OperatingController.setSpeed
+    type: too-late
+    contexts: { 
+        UCA22 [currentSpeed = greaterDesiredSpeed, mode = normal] [H2.1]
+        UCA23 [currentSpeed = greaterDesiredSpeed, mode = degraded] [H2.1]
+   }
+}
+
+// SetMode: EmergencyStop
+RL15{
+    controlAction: OperatingController.emergencyStop
+    type: not-provided
+    contexts: {
+        UCA24 [mode = emergency][H3]
+    } 
+}
+RL16{
+    controlAction: OperatingController.emergencyStop
+    type: provided
+    contexts: {
+        UCA25 [mode = normal][H1,H2]
+        UCA26 [mode = degraded][H1,H2]
+        UCA27 [mode = initialization][H1,H2]
+
+    } 
+}
+RL17{
+    controlAction: OperatingController.emergencyStop
+    type: too-late
+    contexts: {
+         UCA28 [mode = emergency][H3]
+    }
+}
+
+// SetMode: forwards
+RL18{
+    controlAction: OperatingController.forwards
+    type: provided
+    contexts: {
+        UCA29 [mode = emergency][H3]
+        UCA30 [mode = normal, driveDirection = forwards, driveControllerMode = backwards, currentSpeed = trainSpeed, desiredSpeed = greaterZero][H2]
+        UCA31 [mode = degraded, driveDirection = forwards, driveControllerMode = backwards, currentSpeed = trainSpeed, desiredSpeed = greaterZero][H2]   
+
+    } 
+}
+RL19{
+    controlAction: OperatingController.forwards
+    type: not-provided
+    contexts: {
+        UCA32 [mode = normal, driveDirection = forwards, driveControllerMode = backwards, currentSpeed = trainSpeed, desiredSpeed = zero][H2]
+        UCA33 [mode = degraded, driveDirection = forwards, driveControllerMode = backwards, currentSpeed = trainSpeed, desiredSpeed = zero][H2]
+    } 
+}
+
+// SetMode: backwards
+RL20{
+    controlAction: OperatingController.backwards
+    type: provided
+    contexts: {
+        UCA34 [mode = emergency][H3]
+        UCA35 [mode = normal, driveDirection = backwards, driveControllerMode = forwards, currentSpeed = trainSpeed, desiredSpeed = greaterZero][H2]
+        UCA36 [mode = degraded, driveDirection = backwards, driveControllerMode = forwards, currentSpeed = trainSpeed, desiredSpeed = greaterZero][H2]   
+    } 
+}
+RL21{
+    controlAction: OperatingController.backwards
+    type: not-provided
+    contexts: {
+        UCA37 [mode = normal, driveDirection = backwards, driveControllerMode = forwards, currentSpeed = trainSpeed, desiredSpeed = zero][H2]
+        UCA38 [mode = degraded, driveDirection = backwards, driveControllerMode = backwards, currentSpeed = trainSpeed, desiredSpeed = zero][H2]
+    } 
+}
+
+// SendMessage (to Other Vehicle)
+RL22{
+    controlAction: OperatingController.sendMessage
+    type: not-provided
+    contexts: {
+        UCA39 [safeDocking = on][H3,H4,H6]
+    } 
+}
+
+
+// Operating controller communicating with navigation
+RL23{
+    controlAction: OperatingController.getDesiredSpeed
+    type: not-provided
+    contexts:{
+        UCA40 [mode = normal] [H6]
+        UCA41 [mode = degraded] [H6]
+        UCA42 [mode = emergency] [H6]
+        UCA43 [remote_control = on] [H6]
+    }
+}
+RL24{
+    controlAction: OperatingController.getTrackposition
+    type: not-provided
+    contexts:{
+        UCA44 [mode = normal] [H6]
+        UCA45 [mode = degraded] [H6]
+        UCA46 [remote_control = on] [H6]
+    }
+}
+//safe docking
+RL25{
+    controlAction: ManagementSystem.safeDocking
+    type: not-provided
+    contexts:{
+        UCA47 [safeDockingNeeded = Yes] [H3]
+
+    }
+}
+RL26{
+    controlAction: ManagementSystem.safeDocking
+    type: provided
+    contexts:{
+        UCA48 [safeDockingNeeded = No] [H1]
+
+    }
+}
+RL27{
+    controlAction: ManagementSystem.safeDocking
+    type: too-late
+    contexts:{
+        UCA49 [safeDockingNeeded = Yes] [H3]
+
+    }
+}
+
+DCAs
+DRL1 {
+    controlAction: DriveController.acc
+    type: provided
+    contexts: {
+        DCA1 [currentSpeed = lessDesiredSpeed]
+    }
+}
+DRL2 {
+    controlAction: DriveController.acc
+    type: not-provided
+    contexts: {
+        DCA2 [currentSpeed = greaterDesiredSpeed]
+    }
+}
+DRL3 {
+    controlAction: DriveController.dec
+    type: provided
+    contexts: {
+        DCA3 [currentSpeed = greaterDesiredSpeed]
+    }
+}
+DRL4 {
+    controlAction: DriveController.dec
+    type: not-provided
+    contexts: {
+        DCA4 [currentSpeed = lessDesiredSpeed]
+    }
+}
+DRL5 {
+    controlAction: DriveController.brake
+    type: provided
+    contexts: {
+        DCA5 [driving_mode = emergencyStop ,currentSpeed = greaterDesiredSpeed]
+    }
+}
+DRL6 {
+    controlAction: DriveController.brake
+    type: not-provided
+    contexts: {
+        DCA6 [driving_mode = forwards]
+        DCA7 [driving_mode = backwards]
+    }
+}
+
+ControllerConstraints
+C1 "Drive Controller may not accelerate during an emergency stop" [UCA1]
+C2 "Drive Controller may not accelerate while the current speed is equal to the desired speed" [UCA2, UCA4]
+C3 "Drive Controller may not accelerate while the current speed is higher than the desired speed" [UCA3, UCA5]
+C4 "Drive Controller must deccelerate, if the current speed is higher then the desired speed" [UCA6,UCA7]
+C5 "Drive Controller must deccelerate within TBD seconds, if the current speed is higher then the desired speed"[UCA8, UCA9]
+C6 "Drive Controller must not stop to deccelerate until the current speed is equal to the desired speed, when the train was going to fast." [UCA10,UCA11]
+C7 "Drive Controller must not switch driving direction, while the train still goes faster then 0 km/h"[UCA12, UCA14]
+C8 "Drive Controller must set motor to the driving mode, the Drive Controller is currently in, when the train goes 0 km/h"[UCA13,UCA15]
+C9 "Train must brake with maximum power in case of a emergency stop in TBD seconds" [UCA16,UCA17]
+C10 "In case of an emergency stop the train must not stop braking until it stops" [UCA18]
+C11 "Operating Controller must set the speed to the desired speed, if the current speed is above it when in 'normal' or 'degraded' mode"[UCA19,UCA20]
+C12 "Operating Controller must not set speed other than 0, when in emergency mode" [UCA21]
+C13 "Operating Controller must set the speed to the desired speed within TBD seconds, if the current speed is above it when in 'normal' or 'degraded' mode"[UCA22,UCA23]
+C14 "Operating Controller must when in emergency mode imidiatly set Drive Controller to 'Emergency Stop'"[UCA24,UCA28]
+C15 "Operating Controller may not set Drive Controller to 'Emergency Stop' if it's in any other mode than emergency or remote mode"[UCA25,UCA26,UCA27]
+C16 "Operating Controller may not set Drive Controller to 'forwards' while beeing in emergency mode"[UCA29]
+C17 "Operating Controller must set Drive Controller to 'forwards' when in 'normal' or 'degraded' mode and driveDirection = forwards"[UCA32,UCA33]
+C18 "Operating Controller may not set Drive Controller to 'backwards' while beeing in emergency mode"[UCA34]
+C19 "Operating Controller must set Drive Controller to 'backwards' when in 'normal' or 'degraded' mode and driveDirection = backwards"[UCA37,UCA38]
+C20 "Operating Controller must communicate with other vehicle during safedocking procedure"[UCA39]
+C21 "Operating Controller must at all times send its location to TrackNavigation"[UCA40,UCA41,UCA42,UCA43]
+C22 "Operating Controller must at all times (except while in emergency mode) send its current Destination to TrackNavigation"[UCA44,UCA45,UCA46]
+C23 "Operating controller must not switch directions, while train has not fully stopped yet"[UCA30,UCA31,UCA35,UCA36]
+C24 "Management system must give action in time for safe docking, if it is necessary"[UCA47,UCA49]
+C25 "Management system may not give action for safe docking, if it is not necessary"[UCA48]
+
+LossScenarios
+Scenario1 for UCA1
+"An control action to accelerate has been delayed because of a failure in the system and is now send while performing an emergency stop."[H1,H3]
+Scenario2 for UCA1
+"The controller receives an action, setting the desired speed above 0 and thereby accelerating, before changing the drive mode from 'EmergencyStop'."[H1]
+Scenario3 for UCA1
+"The operating controller has send an action to swtich mode to forward/backward and accelerate, but the action to switch mode has been delayed or is lost."[H1]
+Scenario4 for UCA2
+"The controller has memorized a wrong desired speed, which is above the real desired speed."[H2.1]
+Scenario5 for UCA2
+"The controller has received an incorrect current speed from the physical units, leading it to accelerate above the desired speed. The reason for this can be:
+    - Measuring has been unprecise due bad calibration
+    - Information about the speed has been delayed, causing the controller to recieve out of date speed values"[H2.1]
+Scenario6 for UCA3
+"The controller has memorized a wrong desired speed, which is above the real desired speed."[H2.1]
+Scenario7 for UCA3
+"The controller has received an incorrect current speed from the physical units, leading it to accelerate above the desired speed. The reason for this can be:
+    - Measuring has been unprecise due bad calibration
+    - Information about the speed has been delayed, causing the controller to recieve out of date speed values"[H2.1]
+Scenario8 for UCA4
+"The controller has memorized a wrong desired speed, which is above the real desired speed."[H2.1]
+Scenario9 for UCA4
+"The controller has received an incorrect current speed from the physical units, leading it to accelerate above the desired speed. The reason for this can be:
+    - Measuring has been unprecise due bad calibration
+    - Information about the speed has been delayed, causing the controller to recieve out of date speed values"[H2.1]
+Scenario10 for UCA5
+"The controller has memorized a wrong desired speed, which is above the real desired speed."[H2.1]
+Scenario11 for UCA5
+"The controller has received an incorrect current speed from the physical units, leading it to accelerate above the desired speed. The reason for this can be:
+    - Measuring has been unprecise due bad calibration
+    - Information about the speed has been delayed, causing the controller to recieve out of date speed values"[H2.1]
+Scenario12 for UCA6
+"The controller has received an incorrect current speed from the physical units, leading it to beleive, that the current speed is not above the desired and therfore is not decelerating."[H2.1]
+Scenario13 for UCA6
+"The controller memorized an incorrect desired speed, higher then the actual desired speed, leading it to not slow down."[H2.1]
+Scenario14 for UCA7
+"The controller has received an incorrect current speed from the physical units, leading it to beleive, that the current speed is not above the desired and therfore is not decelerating."[H2.1]
+Scenario15 for UCA7
+"The controller memorized an incorrect desired speed, higher then the actual desired speed, leading it to not slow down."[H2.1]
+Scenario16 for UCA8
+"Connection to the physical units has been unusual slow, causing the controller to provide the action too late."[H2.1]
+Scenario17 for UCA8
+"The processing of the drive controller has been occupied with another command, causing the train to decelerate too late."[H2.1]
+Scenario18 for UCA9
+"Connection to the physical units has been unusual slow, causing the controller to provide the action too late."[H2.1]
+Scenario19 for UCA9
+"The processing of the drive controller has been occupied with another command, causing the train to decelerate too late."[H2.1]
+Scenario20 for UCA10
+"The controller memorized an incorrect desired speed, leading it to believe, that the train has decelerated enough, while in reality it stops too soon."[H2.1]
+Scenario21 for UCA10
+"The controller has received an incorrect current speed from the physical unitseading it to believe, that the train has decelerated enough, while in reality it stops too soon."[H2.1]
+Scenario22 for UCA11
+"The controller memorized an incorrect desired speed, leading it to believe, that the train has decelerated enough, while in reality it stops too soon."[H2.1]
+Scenario23 for UCA11
+"The controller has received an incorrect current speed from the physical units, leading it to believe, that the train has decelerated enough, while in reality it stops too soon."[H2.1]
+Scenario24 for UCA12
+"The controller has received an incorrect current speed from the physical units while driving backwards, leading it to change direction to forwards while driving."[H2]
+Scenario25 for UCA13
+"The controller has received an incorrect current speed from the physical units while driving backwards, leading to the controller not changing direction to forwards, even though the train has stopped."[H2]
+Scenario26 for UCA14
+"The controller has received an incorrect current speed from the physical units while driving forwards, leading it to change direction to backwards while driving."[H2]
+Scenario27 for UCA15
+"The controller has received an incorrect current speed from the physical units while driving forwards, leading to the controller not changing direction to backwards, even though the train has stopped."[H2]
+Scenario28 for UCA17
+"The processing of the drive controller has been occupied with another command, causing the train to brake too late."[H3]
+Scenario29 for UCA17
+"The controller needs to long to process being switched into emergency mode by the operating controller, causing the train to brake too late."[H3]
+Scenario30 for UCA18
+"The controller has received an incorrect current speed from the physical units, leading it to believe it has already fully stopped, when in reality it has not."[H3]
+Scenario31 for UCA19
+"The controller does not recieve the correct current speed from the drive controller, leading it to believe, that adjusting the speed is not necessary"[H2.1]
+Scenario32 for UCA19
+"The train drives from onto a part of the track with a lower speed limit, but insufficient track positioning does not realize this. Thus the train is driving to fast."[H2.1]
+Scenario33 for UCA20
+"The controller does not recieve the correct current speed from the drive controller, leading it to believe, that adjusting the speed is not necessary"[H2.1]
+Scenario34 for UCA20
+"The train drives from onto a part of the track with a lower speed limit, but insufficient track positioning does not realize this. Thus the train is driving to fast."[H2.1]
+Scenario35 for UCA20
+"While in degraded mode, the controller recieves a wrongly calculated desired speed, leading it to not adjust the speed of the train, even though it is necessary"[H2.1]
+Scenario36 for UCA22
+"The processing of the operating controller has been occupied by other calculations, causing the speed adjustment to be provided too late."[H2.1]
+Scenario37 for UCA23
+"The processing of the operating controller has been occupied by other calculations, causing the speed adjustment to be provided too late."[H2.1]
+Scenario38 for UCA24
+"Controller switches into emergency mode, but recieves new, wrong input from sensors, leading it to switch back into another mode, before it can provide the command for an emergency stop."[H3]
+Scenario39 for UCA24
+"Sensors do not correctly identify an object on the track (false negativ), causing the train not to make an emergency stop."[H3]
+Scenario40 for UCA25
+"Controller recieves wrong input to send emergency stop action from AI-Obstacle detection."[H1,H2]
+Scenario41 for UCA25
+"Sensors incorrectly identify an object on the track (false positiv), causing the train to switch into emergency mode and making an emergency stop."[H1,H2]
+Scenario42 for UCA25
+"Controller interprets input from sensors wrong, leading it to wringfully send command for emergency stop."[H1,H2]
+Scenario43 for UCA26
+"Sensors incorrectly identify an object on the track (false positiv), causing the train to switch into emergency mode and making an emergency stop."[H1,H2]
+Scenario44 for UCA26
+"Controller interprets input from sensors wrong, leading it to wringfully send command for emergency stop."[H1,H2]
+Scenario45 for UCA28
+"The processing of the operating controller has been occupied by other calculations, causing the action to emergency stop beeing provided too late."[H3]
+Scenario46 for UCA30
+"Controller receives incorrect information on the trains speed, causing it to believe, the train has fully stopped, giving action to switch into driving forwards."[H2]
+Scenario47 for UCA31
+"Controller receives incorrect information on the trains speed, causing it to believe, the train has fully stopped."[H2]
+Scenario48 for UCA32
+"Controller receives incorrect information on the trains speed, causing it to believe, the train has not fully stopped yet even though it has. Therefore the controller does not send out action to switch direction."[H2]
+Scenario49 for UCA32 
+"Controller incorrectly believes, the drive controller is already driving forwards, causing it not to send the action to change."[H2]
+Scenario50 for UCA33
+"Controller receives incorrect information on the trains speed, causing it to believe, the train has not fully stopped yet."[H2]
+Scenario51 for UCA33 
+"Controller incorrectly believes, the drive controller is already driving forwards, causing it not to send the action to change."[H2]
+Scenario52 for UCA35
+"Controller receives incorrect information on the trains speed, causing it to believe, the train has fully stopped."[H2]
+Scenario53 for UCA36
+"Controller receives incorrect information on the trains speed, causing it to believe, the train has fully stopped."[H2]
+Scenario54 for UCA37
+"Controller receives incorrect information on the trains speed, causing it to believe, the train has not fully stopped yet."[H2]
+Scenario55 for UCA37 
+"Controller incorrectly believes, the drive controller is already driving backwards, causing it not to send the action to change."[H2]
+Scenario56 for UCA38
+"Controller receives incorrect information on the trains speed, causing it to believe, the train has not fully stopped yet."[H2]
+Scenario57 for UCA38 
+"Controller incorrectly believes, the drive controller is already driving backwards, causing it not to send the action to change."[H2]
+Scenario58 for UCA39
+"Connection to other vehicle failed to be established making the train not able to send a meassage"[H4]
+Scenario59 for UCA39
+"Controller incorrectly believes it is no longer safe docking, causing it to not send any more messanges."[H3]
+Scenario60 for UCA44
+"Controller does not receive updates on its current GPS position and thereby cant send action, to convert it into track kilometers"[H6]
+Scenario61 for UCA45
+"Controller does not receive updates on its current GPS position and thereby cant send action, to convert it into track kilometers"[H6]
+Scenario62 for UCA46
+"Controller does not receive updates on its current GPS position and thereby cant send action, to convert it into track kilometers"[H6]
